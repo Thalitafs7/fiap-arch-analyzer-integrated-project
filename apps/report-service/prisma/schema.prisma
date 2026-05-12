@@ -1,0 +1,21 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Report {
+  id              String   @id @default(uuid())
+  analysisId      String   @unique
+  status          String   @default("PROCESSING") // PROCESSING, ANALYZED, ERROR
+  components      Json?
+  risks           Json?
+  recommendations Json?
+  summary         String?
+  score           Float?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

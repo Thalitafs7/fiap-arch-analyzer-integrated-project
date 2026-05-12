@@ -1,0 +1,119 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - arch-network
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_MULTIPLE_DATABASES: upload_db,report_db,auth_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infrastructure/docker/postgres/init-multiple-dbs.sh:/docker-entrypoint-initdb.d/init-multiple-dbs.sh
+    networks:
+      - arch-network
+
+  gateway:
+    build:
+      context: ./apps/gateway
+    ports:
+      - "3000:3000"
+    depends_on:
+      - upload-service
+      - report-service
+      - auth-service
+    environment:
+      - PORT=3000
+    networks:
+      - arch-network
+
+  auth-service:
+    build:
+      context: ./apps/auth-service
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/auth_db
+      - JWT_SECRET=super-secret-jwt
+      - PORT=3001
+    depends_on:
+      - postgres
+    networks:
+      - arch-network
+
+  upload-service:
+    build:
+      context: ./apps/upload-service
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/upload_db
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - PORT=3002
+    volumes:
+      - shared-uploads:/app/uploads
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_started
+    networks:
+      - arch-network
+
+  report-service:
+    build:
+      context: ./apps/report-service
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/report_db
+      - PORT=3003
+    depends_on:
+      - postgres
+    networks:
+      - arch-network
+
+  ai-service:
+    build:
+      context: ./apps/ai-service
+    environment:
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672
+      - REPORT_SERVICE_URL=http://report-service:3003
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-sk-mock}
+    volumes:
+      - shared-uploads:/app/uploads
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - arch-network
+
+  frontend:
+    build:
+      context: ./apps/frontend
+    ports:
+      - "3004:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:3000
+    networks:
+      - arch-network
+
+volumes:
+  postgres-data:
+  shared-uploads:
+
+networks:
+  arch-network:
+    driver: bridge
